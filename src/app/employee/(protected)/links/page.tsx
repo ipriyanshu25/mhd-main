@@ -35,15 +35,13 @@ interface Submission {
   createdAt: string
 }
 
-/* page size – keep in sync with backend default */
 const PAGE_SIZE = 10
 
 export default function LinkEntriesPage() {
-  /* ───────── hooks & state ─────────────────────────────────────────── */
-  const params      = useSearchParams()
-  const router      = useRouter()
-  const linkId      = params.get('id')
-  const employeeId  =
+  const params     = useSearchParams()
+  const router     = useRouter()
+  const linkId     = params.get('id')
+  const employeeId =
     (typeof window !== 'undefined' && localStorage.getItem('employeeId')) || ''
 
   const [subs,        setSubs]        = useState<Submission[]>([])
@@ -52,17 +50,20 @@ export default function LinkEntriesPage() {
   const [totalAmount, setTotalAmount] = useState(0)
   const [isLatest,    setIsLatest]    = useState(false)
 
-  /* pagination */
-  const [page,  setPage]  = useState(1)
+  const [page, setPage]   = useState(1)
   const [pages, setPages] = useState(1)
 
-  /* add‑entry modal */
   const [showForm, setShowForm] = useState(false)
-  const [formData, setFormData] = useState({ name: '', upiId: '', amount: '' })
+  const [formData, setFormData] = useState<{
+    name: string
+    qrFile: File | null
+    amount: string
+  }>({ name: '', qrFile: null, amount: '' })
 
-  /* ───────── fetch helper (page‑aware) ─────────────────────────────── */
+  // Fetch a given page of entries
   const fetchEntries = async (p = 1) => {
     if (!linkId || !employeeId) return
+
     setLoading(true)
     setError('')
     try {
@@ -70,7 +71,6 @@ export default function LinkEntriesPage() {
         entries: Submission[]
         totalAmount: number
         isLatest: boolean
-        total: number
         page: number
         pages: number
       }>(
@@ -78,6 +78,7 @@ export default function LinkEntriesPage() {
         { linkId, employeeId, page: p, limit: PAGE_SIZE },
         { withCredentials: true }
       )
+
       setSubs(data.entries)
       setTotalAmount(data.totalAmount)
       setIsLatest(data.isLatest)
@@ -90,68 +91,103 @@ export default function LinkEntriesPage() {
     }
   }
 
-  /* ───────── initial + page change load ───────────────────────────── */
+  // Load on mount and when linkId changes
   useEffect(() => {
     fetchEntries(1)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [linkId, employeeId])
 
-  /* ───────── input handlers ───────────────────────────────────────── */
-  const handleChange = (e: React.ChangeEvent<HTMLInputElement>) =>
-    setFormData(prev => ({ ...prev, [e.target.name]: e.target.value }))
+  // Handle text inputs
+  const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const { name, value } = e.target
+    setFormData(prev => ({ ...prev, [name]: value }))
+  }
 
+  // Handle form submit with QR image
   const handleSubmit = async () => {
     if (!linkId || !employeeId) return
     setError('')
+
+    if (!formData.qrFile) {
+      setError('Please select a QR code image.')
+      return
+    }
+
+    const fd = new FormData()
+    fd.append('name', formData.name)
+    fd.append('amount', formData.amount)
+    fd.append('employeeId', employeeId)
+    fd.append('qrImage', formData.qrFile)
+
     try {
       await api.post(
         `/employee/links/${linkId}/entries`,
-        { ...formData, employeeId },
-        { withCredentials: true }
+        fd,
+        {
+          withCredentials: true,
+          headers: { 'Content-Type': 'multipart/form-data' },
+        }
       )
-      /* refresh current page (could be last) */
-      fetchEntries(page)
-      setFormData({ name: '', upiId: '', amount: '' })
+
+      // Reset form & close
+      setFormData({ name: '', qrFile: null, amount: '' })
       setShowForm(false)
+
+      // Refresh current page
+      fetchEntries(page)
     } catch (err: any) {
       setError(err.response?.data?.error || 'Failed to submit entry.')
     }
   }
 
-  /* ───────── mini pager component ─────────────────────────────────── */
-  const Pager = () => (
-    pages > 1 && (
-      <div className="flex items-center justify-center gap-3 py-4">
-        <Button size="sm" variant="outline" disabled={page === 1}
-          onClick={() => fetchEntries(page - 1)}>
+  // Simple pager UI
+  const Pager = () =>
+    pages > 1 ? (
+      <div className="flex items-center justify-center gap-4 py-4">
+        <Button
+          size="sm"
+          variant="outline"
+          disabled={page === 1}
+          onClick={() => fetchEntries(page - 1)}
+        >
           Prev
         </Button>
         <span className="text-sm">
-          Page&nbsp;{page}&nbsp;/&nbsp;{pages}
+          Page {page} of {pages}
         </span>
-        <Button size="sm" variant="outline" disabled={page === pages}
-          onClick={() => fetchEntries(page + 1)}>
+        <Button
+          size="sm"
+          variant="outline"
+          disabled={page === pages}
+          onClick={() => fetchEntries(page + 1)}
+        >
           Next
         </Button>
       </div>
-    )
-  )
+    ) : null
 
-  /* ───────── render ──────────────────────────────────────────────── */
-  if (!linkId)
-    return <p className="text-red-500 text-center mt-10">No link selected.</p>
+  if (!linkId) {
+    return (
+      <p className="text-red-500 text-center mt-10">
+        No link selected.
+      </p>
+    )
+  }
 
   return (
     <div className="p-8 max-w-4xl mx-auto space-y-6">
-      {/* header row */}
+      {/* Header */}
       <div className="flex items-center justify-between">
         <h2 className="text-3xl font-bold">Entries for Link</h2>
-        <Button variant="outline" onClick={() => router.push('/employee/dashboard')}>
-          Go&nbsp;Home
+        <Button
+          variant="outline"
+          onClick={() => router.push('/employee/dashboard')}
+        >
+          Go Home
         </Button>
       </div>
 
-      {/* add‑entry button (latest only) */}
+      {/* Add entry button (latest link only) */}
       {isLatest && (
         <Dialog open={showForm} onOpenChange={setShowForm}>
           <DialogTrigger asChild>
@@ -160,6 +196,7 @@ export default function LinkEntriesPage() {
               Add Entry
             </Button>
           </DialogTrigger>
+
           <DialogPortal>
             <DialogOverlay className="fixed inset-0 bg-black/50" />
             <DialogContent className="fixed top-1/2 left-1/2 w-full max-w-md -translate-x-1/2 -translate-y-1/2 bg-white p-6 rounded-2xl shadow-lg">
@@ -168,13 +205,32 @@ export default function LinkEntriesPage() {
               </DialogHeader>
 
               <div className="space-y-4">
-                <Input name="name"   value={formData.name}   onChange={handleChange} placeholder="Your Name" />
-                <Input name="upiId"  value={formData.upiId}  onChange={handleChange} placeholder="UPI ID" />
-                <Input name="amount" type="number" value={formData.amount} onChange={handleChange} placeholder="Amount" />
+                <Input
+                  name="name"
+                  value={formData.name}
+                  onChange={handleChange}
+                  placeholder="Your Name"
+                />
+                <input
+                  type="file"
+                  accept="image/*"
+                  onChange={e => {
+                    const file = e.target.files?.[0] || null
+                    setFormData(f => ({ ...f, qrFile: file }))
+                  }}
+                  className="block w-full text-sm text-gray-600"
+                />
+                <Input
+                  name="amount"
+                  type="number"
+                  value={formData.amount}
+                  onChange={handleChange}
+                  placeholder="Amount"
+                />
                 {error && <p className="text-red-500">{error}</p>}
               </div>
 
-              <DialogFooter className="mt-6 space-x-2 flex justify-end">
+              <DialogFooter className="mt-6 flex justify-end space-x-2">
                 <Button onClick={handleSubmit}>Submit</Button>
                 <DialogClose asChild>
                   <Button variant="outline">Cancel</Button>
@@ -185,7 +241,7 @@ export default function LinkEntriesPage() {
         </Dialog>
       )}
 
-      {/* table / loader / error */}
+      {/* Entries table or loader/error */}
       {loading ? (
         <div className="flex justify-center py-12">
           <Loader2 className="animate-spin" />
@@ -199,7 +255,7 @@ export default function LinkEntriesPage() {
               <TableRow>
                 <TH>Name</TH>
                 <TH>UPI&nbsp;ID</TH>
-                <TH className="text-right">Amount&nbsp;& Date</TH>
+                <TH className="text-right">Amount &amp; Date</TH>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -220,7 +276,7 @@ export default function LinkEntriesPage() {
           <Pager />
 
           <div className="text-right text-lg font-semibold pt-2">
-            Paid Total:&nbsp;₹{totalAmount.toFixed(2)}
+            Paid Total: ₹{totalAmount.toFixed(2)}
           </div>
         </>
       )}
